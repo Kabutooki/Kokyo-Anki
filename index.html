@@ -120,7 +120,7 @@ select,input{font-size:16px!important}
     <div class="label"><strong>学習履歴</strong><span>機種変更・バックアップ用</span></div>
     <div class="side-actions"><button class="ghost" id="exportProgress">履歴を書き出す</button><button class="ghost" id="importProgressBtn">履歴を読み込む</button></div>
     <input class="hidden-file" id="importProgress" type="file" accept="application/json,.json">
-    <div class="ios-note">習熟判定は自動です。同じ問題に2回連続で正答すると「習熟」になります。不正解になると連続正答数は0に戻ります。学習履歴は端末内に保存されます。</div>
+    <div class="ios-note">問題演習中に必要な操作は4択の選択だけです。回答後は正誤を短時間表示して、自動で次の問題へ進みます。同じ問題に2回連続で正答すると「習熟」になります。不正解になると連続正答数は0に戻ります。学習履歴は端末内に保存されます。</div>
   </div>
   <div class="method"><details><summary>重要度の算定方法</summary>
     <p>『センター政経問題』から339問の問題ブロックを抽出し、『公共一問一答』の政経分野（第V〜X部）の各解答語が問題文・選択肢に現れる問題数を集計しています。</p>
@@ -141,8 +141,7 @@ select,input{font-size:16px!important}
       <div class="reveal-area"><div class="auto-feedback" id="autoFeedback" role="status"></div></div>
     </div>
   </section>
-  <div class="navrow"><button class="navbtn" id="prev">← 前へ</button><button class="navbtn" id="next">次へ →</button></div>
-  <div class="kbdhint">1〜4: 選択　Space: 解答後に次へ　← / →: 移動　・　2回連続正答で自動的に習熟</div>
+  <div class="kbdhint">選択肢をタップするだけで進みます。キーボードでは 1〜4 で回答できます。2回連続正答で自動的に習熟します。</div>
   <div class="dashboard"><div class="dash"><div class="n" id="statNew">0</div><div class="t">未学習</div></div><div class="dash"><div class="n" id="statAgain">0</div><div class="t">要復習</div></div><div class="dash"><div class="n" id="statHard">0</div><div class="t">連続正答 1/2</div></div><div class="dash"><div class="n" id="statGood">0</div><div class="t">習熟</div></div></div>
 </main>
 </div></div><div class="toast" id="toast"></div>
@@ -154,6 +153,7 @@ const LEGACY_STORAGE_KEY='kokyo_flashcards_progress_v1';
 let state={mode:'importance',importance:'S',part:'第V部',section:'ALL',query:'',unseenOnly:false,shuffle:false,index:0,revealed:false,selectedChoice:null,feedback:null};
 let progress=loadProgress();
 let deck=[];
+let advanceTimer=null;
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const impLabel={S:'S 最重要',A:'A 重要',B:'B 標準',C:'C 補充',R:'参考外'};
@@ -190,7 +190,8 @@ function seededShuffle(arr){return arr.slice().sort((a,b)=>hash(cardKey(a))-hash
 function unique(arr){return [...new Set(arr)]}
 function norm(s){return String(s||'').toLowerCase().normalize('NFKC').replace(/\s+/g,'')}
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function resetAnswer(){state.revealed=false;state.selectedChoice=null;state.feedback=null}
+function clearAdvanceTimer(){if(advanceTimer!==null){clearTimeout(advanceTimer);advanceTimer=null}}
+function resetAnswer(){clearAdvanceTimer();state.revealed=false;state.selectedChoice=null;state.feedback=null}
 function answerTokens(s){return norm(s).replace(/[「」『』（）()［］\[\]・,，。:：;；\/]/g,' ').split(/\s+/).filter(x=>x.length>=2)}
 function answerType(s){
   const n=norm(s), tags=[];
@@ -246,7 +247,24 @@ function choose(index){
   const c=deck[state.index],opts=choicesFor(c); if(index<0||index>=opts.length)return;
   state.selectedChoice=index;
   state.feedback=recordResult(c,!!opts[index].correct);
-  state.revealed=true; render();
+  state.revealed=true;
+  render();
+  clearAdvanceTimer();
+  // 正解は約0.8秒、不正解は正答を確認できるよう約1.4秒表示して自動で次へ。
+  const delay=state.feedback.isCorrect?800:1400;
+  advanceTimer=setTimeout(()=>{
+    advanceTimer=null;
+    if(!deck.length)return;
+    if(state.index<deck.length-1){
+      state.index++;
+      resetAnswer();
+      render();
+      const card=$('#card');
+      if(card&&card.getBoundingClientRect().top<0)card.scrollIntoView({behavior:'smooth',block:'start'});
+    }else{
+      toast('このセットは終了しました');
+    }
+  },delay);
 }
 
 function init(){
@@ -273,7 +291,6 @@ function bind(){
   $('#unseenOnly').addEventListener('change',e=>{state.unseenOnly=e.target.checked;state.index=0;rebuild(true)});
   $('#shuffle').addEventListener('change',e=>{state.shuffle=e.target.checked;state.index=0;rebuild(true)});
   $('#choices').addEventListener('click',e=>{const b=e.target.closest('.choice');if(b)choose(Number(b.dataset.index))});
-  $('#prev').addEventListener('click',()=>move(-1)); $('#next').addEventListener('click',()=>move(1));
   $('#restart').addEventListener('click',()=>{state.index=0;resetAnswer();rebuild(true);toast('先頭に戻りました')});
   $('#resetProgress').addEventListener('click',()=>{if(confirm('学習履歴をすべて初期化しますか？')){progress={};saveProgress();updateStats();rebuild(true);toast('学習履歴を初期化しました')}});
   $('#exportProgress').addEventListener('click',exportProgressData);
@@ -283,8 +300,6 @@ function bind(){
   document.addEventListener('keydown',e=>{
     if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName)) return;
     if(!state.revealed&&['1','2','3','4'].includes(e.key)){e.preventDefault();choose(Number(e.key)-1)}
-    else if(e.code==='Space'){e.preventDefault();if(state.revealed)move(1)}
-    else if(e.key==='ArrowRight') move(1); else if(e.key==='ArrowLeft') move(-1);
   });
 }
 function rebuild(resetReveal=true){
@@ -304,7 +319,7 @@ function titleForDeck(){
 }
 function render(){
   $('#sessionTitle').textContent=titleForDeck(); $('#sessionSub').textContent=`${deck.length.toLocaleString()}枚${state.unseenOnly?'・未学習のみ':''}${state.query?'・検索中':''}${state.shuffle?'・シャッフル':''}`;
-  const has=deck.length>0; $('#empty').classList.toggle('show',!has); $('#card').style.display=has?'flex':'none'; $('.navrow').style.display=has?'flex':'none';
+  const has=deck.length>0; $('#empty').classList.toggle('show',!has); $('#card').style.display=has?'flex':'none';
   $('#counter').textContent=has?`${state.index+1} / ${deck.length}`:'0 / 0'; $('#progressFill').style.width=has?`${((state.index+1)/deck.length)*100}%`:'0%';
   if(!has)return;
   const c=deck[state.index], st=statusOf(c), opts=choicesFor(c);
@@ -316,18 +331,17 @@ function render(){
   const fb=$('#autoFeedback');
   if(state.revealed&&state.feedback){
     const f=state.feedback; let msg='';
-    if(f.isCorrect&&f.becameMastered)msg='正解。2回連続で正答したため「習熟」になりました。';
-    else if(f.isCorrect&&f.mastered)msg='正解。2回連続正答を達成しており「習熟」です。';
-    else if(f.isCorrect)msg='正解。連続正答 1 / 2。あと1回連続で正答すると「習熟」です。';
-    else if(f.lostMastery)msg='不正解。連続正答が途切れたため、習熟状態を解除しました。';
-    else msg='不正解。連続正答数は0に戻りました。';
+    if(f.isCorrect&&f.becameMastered)msg='正解。2回連続正答で「習熟」になりました。次の問題へ進みます。';
+    else if(f.isCorrect&&f.mastered)msg='正解。「習熟」です。次の問題へ進みます。';
+    else if(f.isCorrect)msg='正解。連続正答 1 / 2。次の問題へ進みます。';
+    else if(f.lostMastery)msg='不正解。正答を確認してから自動で次へ進みます。習熟状態は解除されました。';
+    else msg='不正解。正答を確認してから自動で次へ進みます。連続正答数は0に戻りました。';
     fb.textContent=msg;fb.className='auto-feedback show '+(f.isCorrect?'correct':'wrong');
   }else{fb.textContent='';fb.className='auto-feedback'}
   if(c.importance==='R'){$('#refSummary').textContent='重要度：参考外（政経過去問では判定しない）';$('#refContent').innerHTML='第I〜IV部は倫理分野のため、今回のセンター政経資料による頻度分類の対象外です。'}
   else{$('#refSummary').textContent=`センター政経での語の出現：${c.refHits}問`;const codes=(c.refQuestionCodes||[]).join('、')||'該当なし';const terms=(c.matchTerms||[]).join(' / ');$('#refContent').innerHTML=`<div>照合語: <code>${esc(terms||c.answer)}</code></div><div>該当問題コード: <code>${esc(codes)}</code></div>`}
-  $('#refDetails').open=false; $('#prev').disabled=state.index===0; $('#next').disabled=state.index>=deck.length-1;
+  $('#refDetails').open=false;
 }
-function move(delta){if(!deck.length)return;const ni=state.index+delta;if(ni<0||ni>=deck.length)return;state.index=ni;resetAnswer();render()}
 function exportProgressData(){
   const payload={app:'公共一問一答',version:2,masteryRule:'2_consecutive_correct',exportedAt:new Date().toISOString(),progress};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
