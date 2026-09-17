@@ -79,6 +79,7 @@ select,input{font-size:16px!important}
 <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="application-name" content="公共一問一答">
+<meta name="app-build" content="2026-09-17-v6">
 </head>
 <body>
 <div id="pwaInstallHint" class="install-hint" role="status"><button type="button" aria-label="閉じる" onclick="this.parentElement.style.display='none';localStorage.setItem('pwaHintDismissed','1')">×</button><strong>ホーム画面に追加できます。</strong> Safariで共有ボタンを押し、「ホーム画面に追加」を選択してください。</div>
@@ -153,7 +154,7 @@ const LEGACY_STORAGE_KEY='kokyo_flashcards_progress_v1';
 let state={mode:'importance',importance:'S',part:'第V部',section:'ALL',query:'',unseenOnly:false,shuffle:false,index:0,revealed:false,selectedChoice:null,feedback:null};
 let progress=loadProgress();
 let deck=[];
-let advanceTimer=null;
+let advanceGeneration=0;
 
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
 const impLabel={S:'S 最重要',A:'A 重要',B:'B 標準',C:'C 補充',R:'参考外'};
@@ -182,7 +183,10 @@ function loadProgress(){
     return migrated;
   }catch(e){return {}}
 }
-function saveProgress(){localStorage.setItem(STORAGE_KEY,JSON.stringify(progress))}
+function saveProgress(){
+  try{localStorage.setItem(STORAGE_KEY,JSON.stringify(progress));return true}
+  catch(e){console.warn('学習履歴を保存できませんでした:',e);return false}
+}
 function statusOf(c){const p=progress[c.id];if(!p||!p.attempts)return 'new';if(p.mastered||p.correctStreak>=2)return 'mastered';if(p.correctStreak===1)return 'streak1';return 'review'}
 function cardKey(c){return c.id+'|'+c.question+'|'+c.answer}
 function hash(s){let h=2166136261;for(let i=0;i<s.length;i++){h^=s.charCodeAt(i);h=Math.imul(h,16777619)}return h>>>0}
@@ -190,8 +194,31 @@ function seededShuffle(arr){return arr.slice().sort((a,b)=>hash(cardKey(a))-hash
 function unique(arr){return [...new Set(arr)]}
 function norm(s){return String(s||'').toLowerCase().normalize('NFKC').replace(/\s+/g,'')}
 function esc(s){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]))}
-function clearAdvanceTimer(){if(advanceTimer!==null){clearTimeout(advanceTimer);advanceTimer=null}}
-function resetAnswer(){clearAdvanceTimer();state.revealed=false;state.selectedChoice=null;state.feedback=null}
+function cancelAutoAdvance(){advanceGeneration++}
+function resetAnswer(){cancelAutoAdvance();state.revealed=false;state.selectedChoice=null;state.feedback=null}
+function advanceToNext(expectedGeneration){
+  if(expectedGeneration!==advanceGeneration||!state.revealed||!deck.length)return;
+  // この回答に紐づく待機処理を無効化してから次の問題へ進む。
+  advanceGeneration++;
+  if(state.index<deck.length-1){
+    state.index++;
+    state.revealed=false;
+    state.selectedChoice=null;
+    state.feedback=null;
+    render();
+    const card=$('#card');
+    if(card&&card.getBoundingClientRect().top<0){
+      try{card.scrollIntoView({behavior:'smooth',block:'start'})}catch(e){card.scrollIntoView(true)}
+    }
+  }else{
+    toast('このセットは終了しました');
+  }
+}
+function scheduleAutoAdvance(delay){
+  // iOS/PWAでも確実に進むよう、回答ごとの世代番号で古い待機処理を無効化する。
+  const generation=++advanceGeneration;
+  window.setTimeout(()=>advanceToNext(generation),delay);
+}
 function answerTokens(s){return norm(s).replace(/[「」『』（）()［］\[\]・,，。:：;；\/]/g,' ').split(/\s+/).filter(x=>x.length>=2)}
 function answerType(s){
   const n=norm(s), tags=[];
@@ -246,25 +273,16 @@ function choose(index){
   if(!deck.length||state.revealed)return;
   const c=deck[state.index],opts=choicesFor(c); if(index<0||index>=opts.length)return;
   state.selectedChoice=index;
-  state.feedback=recordResult(c,!!opts[index].correct);
+  const isCorrect=!!opts[index].correct;
+  // 保存に失敗しても演習そのものは止めない。
+  try{state.feedback=recordResult(c,isCorrect)}catch(e){
+    console.warn('学習履歴の記録に失敗しました:',e);
+    state.feedback={isCorrect,correctStreak:0,mastered:false,becameMastered:false,lostMastery:false};
+  }
   state.revealed=true;
   render();
-  clearAdvanceTimer();
-  // 正解は約0.8秒、不正解は正答を確認できるよう約1.4秒表示して自動で次へ。
-  const delay=state.feedback.isCorrect?800:1400;
-  advanceTimer=setTimeout(()=>{
-    advanceTimer=null;
-    if(!deck.length)return;
-    if(state.index<deck.length-1){
-      state.index++;
-      resetAnswer();
-      render();
-      const card=$('#card');
-      if(card&&card.getBoundingClientRect().top<0)card.scrollIntoView({behavior:'smooth',block:'start'});
-    }else{
-      toast('このセットは終了しました');
-    }
-  },delay);
+  // 正解は0.8秒、不正解は1.4秒だけ正誤を表示し、その後は追加操作なしで次へ。
+  scheduleAutoAdvance(isCorrect?800:1400);
 }
 
 function init(){
@@ -373,8 +391,19 @@ init();
   const hint = document.getElementById('pwaInstallHint');
   if (hint && isIOS && !isStandalone && localStorage.getItem('pwaHintDismissed') !== '1') hint.style.display = 'block';
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', function(){
-      navigator.serviceWorker.register('./sw.js').catch(function(err){ console.warn('Service worker registration failed:', err); });
+    let reloadingForUpdate = false;
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      if (reloadingForUpdate) return;
+      reloadingForUpdate = true;
+      window.location.reload();
+    });
+    window.addEventListener('load', async function(){
+      try{
+        const reg = await navigator.serviceWorker.register('./sw.js', {updateViaCache:'none'});
+        // GitHub Pages更新後に古いPWAが残り続けないよう、起動時に更新確認する。
+        await reg.update();
+        if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
+      }catch(err){ console.warn('Service worker registration failed:', err); }
     });
   }
 })();
