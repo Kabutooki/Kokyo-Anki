@@ -1,4 +1,4 @@
-const CACHE_NAME = 'koukyou-flashcards-v3';
+const CACHE_NAME = 'koukyou-flashcards-v4';
 const BASE = new URL('./', self.location).href;
 const APP_SHELL = [
   './',
