@@ -1,4 +1,4 @@
-const CACHE_NAME = 'koukyou-flashcards-v8';
+const CACHE_NAME = 'koukyou-flashcards-v13';
 const APP_SHELL = [
   './',
   './index.html',
