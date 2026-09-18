@@ -85,3 +85,14 @@ Playwright の `setContent` + ローカル教材データ注入で、ネット�
 - JavaScript構文 (`app.js`, `sw.js`): PASS
 - ZIP整合性 (`unzip -t`): PASS
 - Chromiumによるlocalhost E2Eは実行環境の `ERR_BLOCKED_BY_ADMINISTRATOR` により実施不可。静的・データ・構文検査で代替し、実機iPhoneでは更新後の最終確認を推奨。
+
+
+## v27 追加QA
+- 「習熟以外」チェックボックスのDOM存在確認: PASS
+- 状態の保存・復元 (`nonMasteredOnly`): PASS
+- 候補デッキで `mastered` を除外: PASS
+- `due`（定着確認）は除外しない: PASS
+- 演習中のフィルターロック対象: PASS
+- JavaScript構文検査: PASS
+- cards.jsonはv26と同一: PASS
+- ZIP整合性: PASS
