@@ -25,3 +25,36 @@
 
 ## 未実施
 この実行環境ではiPhoneホーム画面PWAの実機操作はできないため、実機でのタップ・バックグラウンド復帰・オフライン起動・Service Worker更新は未実施です。
+
+
+## v23 UI回帰確認
+- タッチ端末向けCSSで `.choice:hover` の青色スタイルが無効になることを静的検査。
+- `.choice.correct` / `.choice.wrong` の緑・赤フィードバック規則は変更なし。
+- デスクトップの `:focus-visible` を維持。
+- app.js / sw.js syntax check: pass。
+- cards.json: 変更なし。
+
+
+## v24 追加QA項目
+- app.js JavaScript syntax check
+- sw.js JavaScript syntax check
+- VERSION.json / cards.json JSON parse
+- 必須UI ID存在確認
+- default session size = 20 の静的確認
+- sessionPhase 3状態のコード存在確認
+- 最終問で finishSession('completed') が呼ばれることを静的確認
+- v23/v24 cards.json SHA-256完全一致
+- ZIP integrity check
+
+### v24 実ブラウザ相当テスト（Chromium / iPhone 390×844 viewport）
+Playwright の `setContent` + ローカル教材データ注入で、ネットワークに依存せずUI状態遷移を実行した。
+
+- 初期表示が `SESSION SETUP` であること: PASS
+- 初期問題数が20: PASS
+- 問題カードが開始前に非表示: PASS
+- 1問指定 → 演習開始 → 4択回答 → 自動で終了画面: PASS
+- 終了結果が `1/1` になり、正解+不正解=1: PASS
+- 終了画面から条件設定へ戻れる: PASS
+- 3問指定 → 開始 → 未回答のまま途中終了 → `0/3` と未回答3問表示: PASS
+
+※これはiPhone実機SafariそのものではなくChromiumのモバイルviewportによる回帰テスト。iPhoneホーム画面PWA固有の最終確認は実機で行うのが望ましい。

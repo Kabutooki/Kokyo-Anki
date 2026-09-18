@@ -44,3 +44,29 @@
 - v21のIndexedDB名と既存進捗キーを維持し、既存学習履歴をそのまま利用。
 - 問題文・正答・誤答・重要度・出典はv21と完全一致。
 - Service Workerのみv22キャッシュへ更新。
+
+
+# v23 — iPhone touch focus / sticky hover 修正
+- `.choice:hover` をタッチ端末にも適用していたため、iOS Safari / standalone PWA でタップ後に青い border / box-shadow が残る可能性がありました。
+- hoverスタイルを `(hover:hover) and (pointer:fine)` に限定。
+- touch/coarse pointer では選択肢のブラウザ既定focus outlineを抑制。
+- デスクトップのキーボード操作では `:focus-visible` を保持。
+- Service Worker cacheをv23へ更新。
+
+
+## v24 — セッション単位の演習
+
+### 追加した状態
+- `sessionPhase`: `setup` / `active` / `completed`
+- `sessionSize`: 1回の指定問題数（初期20）
+- `sessionStats`: target / answered / correct / wrong / startedAt / endedAt / endReason
+
+### 動作
+1. フィルタ条件から候補デッキを作る。
+2. ユーザーが問題数を決めて `演習開始`。
+3. 開始時に候補の先頭から指定数だけを固定してセッションデッキにする。シャッフル有効時は開始ごとのseedで並べ替える。意味弱点モードは既存の優先順位を維持する。
+4. 回答ごとにsessionStatsを更新し、IndexedDBのattemptEvents / cardStateとは独立してセッション成績を保持する。
+5. 最終問のフィードバック終了後に `completed` へ遷移する。途中終了も同じ結果画面へ遷移する。
+6. PWA再開時はv24で開始済みのセッションのみ復元する。v23以前の旧セッション状態はsetupへ安全に移行する。
+
+これにより、「どこからが1回の演習か」「いつ終わったか」がUIと内部状態の双方で明確になった。
