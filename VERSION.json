@@ -1,7 +1,7 @@
 {
-  "appVersion": 24,
-  "dataVersion": "2026.09.18.2",
+  "appVersion": 26,
+  "dataVersion": "2026.09.18.4",
   "schemaVersion": 3,
   "cardSchemaVersion": 2,
-  "semanticModel": "jp-lsa-char-tfidf-svd-v1"
+  "semanticModel": "jp-lsa-char-tfidf-svd-v2"
 }

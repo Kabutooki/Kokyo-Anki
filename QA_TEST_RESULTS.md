@@ -58,3 +58,30 @@ Playwright の `setContent` + ローカル教材データ注入で、ネット�
 - 3問指定 → 開始 → 未回答のまま途中終了 → `0/3` と未回答3問表示: PASS
 
 ※これはiPhone実機SafariそのものではなくChromiumのモバイルviewportによる回帰テスト。iPhoneホーム画面PWA固有の最終確認は実機で行うのが望ましい。
+
+
+## v25 追加QA
+- 「漢字N字」明示問題抽出: 12問
+- 4択の漢字文字数一致: 12/12 PASS
+- 不一致: 0
+- 正答と誤答重複: 0
+- 誤答同士重複: 0
+- 全カードの誤答数3: PASS
+- v24→v25で問題文・正答・意味ベクトル差分: 0
+- JavaScript / Service Worker / JSON構文: PASS
+
+
+## v26 追加QA
+- 追加カード数: 47 — PASS
+- 総カード数: 1,972 — PASS
+- ID一意性: True — PASS
+- 既存1,925問の非semantic教材内容差分: 0 — PASS
+- 新規4択の正規化重複: 0 — PASS
+- 48次元ベクトル: 1972 / 1972 — PASS
+- 24近傍: 1972 / 1972 — PASS
+- 近傍に自己ID: 0 — PASS
+- ベクトルノルム範囲: 1.000000 ～ 1.000000 — PASS
+- 新規47カードの正答/照合語がセンター政経過去問本文に存在: 47 / 47 — PASS
+- JavaScript構文 (`app.js`, `sw.js`): PASS
+- ZIP整合性 (`unzip -t`): PASS
+- Chromiumによるlocalhost E2Eは実行環境の `ERR_BLOCKED_BY_ADMINISTRATOR` により実施不可。静的・データ・構文検査で代替し、実機iPhoneでは更新後の最終確認を推奨。
