@@ -76,19 +76,21 @@ select,input{font-size:16px!important}
 @media (display-mode: standalone){.install-hint{display:none!important}}
 
 .feedback-note{margin-top:10px;padding:10px 12px;border-radius:10px;background:#f8fafc;color:#475467;font-size:13px;line-height:1.6;display:none}.feedback-note.show{display:block}.confusion-dialog{width:min(680px,calc(100vw - 28px));max-height:80vh;border:1px solid var(--line);border-radius:18px;padding:0;background:#fff;color:var(--text);box-shadow:0 24px 80px rgba(16,24,40,.24)}.confusion-dialog::backdrop{background:rgba(16,24,40,.42)}.dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 18px;border-bottom:1px solid var(--line);position:sticky;top:0;background:#fff}.dialog-sub{font-size:11px;color:var(--muted);margin-top:3px}.confusion-content{padding:10px 18px 18px;display:grid;gap:8px}.confusion-row{border:1px solid var(--line);border-radius:12px;padding:10px 12px}.confusion-pair{font-weight:750}.confusion-meta{font-size:11px;color:var(--muted);margin-top:3px}.loading-state{position:fixed;inset:0;z-index:100;background:var(--bg);display:grid;place-items:center;color:#475467;font-size:14px}.loading-state.hide{display:none}.update-ready{font-size:11px;color:var(--muted)}
+
+.hotspot-dialog{width:min(820px,calc(100vw - 24px));max-height:88vh;border:1px solid var(--line);border-radius:18px;padding:0;background:#fff;color:var(--text);box-shadow:0 24px 80px rgba(16,24,40,.24)}.hotspot-dialog::backdrop{background:rgba(16,24,40,.42)}.hotspot-map{padding:14px 18px 6px}.hotspot-map svg{display:block;width:100%;height:auto;max-height:360px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(180deg,#fbfcfe,#f7f8fb)}.hotspot-legend{display:flex;align-items:center;justify-content:flex-end;gap:7px;font-size:10px;color:var(--muted);margin-top:5px}.legend-gradient{width:90px;height:7px;border-radius:999px;background:linear-gradient(90deg,hsl(220 76% 66%),hsl(6 76% 46%))}.hotspot-content{padding:4px 18px 18px;display:grid;gap:7px}.hotspot-row{display:grid;grid-template-columns:28px minmax(0,1fr) 34px;gap:9px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:9px 10px}.hotspot-rank{font-size:12px;font-weight:800;color:#667085;text-align:center}.hotspot-label{font-size:13px;font-weight:760}.hotspot-meta{font-size:10px;color:var(--muted);margin-top:1px}.hotspot-bar{height:5px;background:#eef1f5;border-radius:999px;overflow:hidden;margin-top:5px}.hotspot-bar span{display:block;height:100%;background:#d92d20;border-radius:999px}.hotspot-score{font-size:12px;font-variant-numeric:tabular-nums;text-align:right;color:#475467}.hotspot-empty{padding:28px 12px;text-align:center;color:var(--muted);font-size:13px}.semantic-note{font-size:11px;color:var(--muted);padding:0 18px 12px;line-height:1.55}
 </style>
 <link href="./manifest.webmanifest" rel="manifest"/>
 <link href="./icons/apple-touch-icon.png" rel="apple-touch-icon"/>
 <meta content="yes" name="mobile-web-app-capable"/>
 <meta content="公共一問一答" name="application-name"/>
 <meta content="2026-09-17-v6" name="app-build"/>
-<meta content="2026-09-18-v21" name="app-build"/></head>
+<meta content="2026-09-18-v22" name="app-build"/></head>
 <body><div class="loading-state" id="loadingState">教材と学習履歴を読み込んでいます…</div>
 <div class="install-hint" id="pwaInstallHint" role="status"><button aria-label="閉じる" onclick="this.parentElement.style.display='none';localStorage.setItem('pwaHintDismissed','1')" type="button">×</button><strong>ホーム画面に追加できます。</strong> Safariで共有ボタンを押し、「ホーム画面に追加」を選択してください。</div>
 <div class="app">
 <header class="topbar"><div class="topbar-inner">
 <div class="brand"><div class="brandmark">公政</div><div><h1>公共一問一答｜単語帳</h1><p>重要度別・分野別に反復学習</p></div></div>
-<div style="display:flex;align-items:center;gap:9px"><button class="mobile-filter" id="mobileFilter">絞り込み</button><div class="header-stats"><div class="mini-stat"><strong id="allCards"></strong> 枚</div><div class="mini-stat">政経 <strong id="peCards"></strong> 枚</div><div class="mini-stat">過去問 <strong id="refQs"></strong> 問</div><div class="mini-stat">今日の復習 <strong id="dueCards"></strong></div></div></div>
+<div style="display:flex;align-items:center;gap:9px"><button class="mobile-filter" id="mobileFilter">絞り込み</button><div class="header-stats"><div class="mini-stat"><strong id="allCards"></strong> 枚</div><div class="mini-stat">政経 <strong id="peCards"></strong> 枚</div><div class="mini-stat">過去問 <strong id="refQs"></strong> 問</div><div class="mini-stat">今日の復習 <strong id="dueCards"></strong></div><div class="mini-stat">弱点領域 <strong id="hotAreas">0</strong></div></div></div>
 </div></header>
 <div class="layout">
 <aside class="sidebar" id="sidebar">
@@ -98,7 +100,7 @@ select,input{font-size:16px!important}
 <button class="tab" data-mode="field">分野別</button>
 <button class="tab" data-mode="all">全範囲</button>
 <button class="tab" data-mode="review">未習熟復習</button>
-<button class="tab" data-mode="due">今日の復習</button><button class="tab" data-mode="wrong">誤答ノート</button></div>
+<button class="tab" data-mode="due">今日の復習</button><button class="tab" data-mode="wrong">誤答ノート</button><button class="tab" data-mode="semantic">意味弱点</button></div>
 <div id="importanceControls">
 <div class="label"><strong>重要度</strong><span>センター政経の出現頻度</span></div>
 <div class="imp-grid">
@@ -122,7 +124,7 @@ select,input{font-size:16px!important}
 <div class="label"><strong>学習履歴</strong><span>機種変更・バックアップ用</span></div>
 <div class="side-actions"><button class="ghost" id="exportProgress">履歴を書き出す</button><button class="ghost" id="importProgressBtn">履歴を読み込む</button></div>
 <input accept="application/json,.json" class="hidden-file" id="importProgress" type="file"/>
-<div class="side-actions"><button class="ghost" id="showConfusions">混同ペアを見る</button><button class="ghost" id="exportDiagnostics">学習分析を書き出す</button></div><div class="ios-note">問題演習中の操作は4択の選択だけです。回答結果・誤答内容・復習時期は自動保存されます。2回連続正答で「習熟」となり、その後は間隔を空けて「定着確認」に自動出題します。</div>
+<div class="side-actions"><button class="ghost" id="showConfusions">混同ペアを見る</button><button class="ghost" id="showHotspots">弱点マップを見る</button></div><div class="side-actions"><button class="ghost" id="exportDiagnostics">学習分析を書き出す</button><span></span></div><div class="ios-note">問題演習中の操作は4択の選択だけです。回答結果・誤答内容・復習時期は自動保存されます。2回連続正答で「習熟」となり、その後は間隔を空けて「定着確認」に自動出題します。誤答は意味ベクトル空間にも反映され、「意味弱点」では周辺概念を重点的かつ分散して復習します。</div>
 </div>
 <div class="method"><details><summary>重要度の算定方法</summary>
 <p>『センター政経問題』から339問の問題ブロックを抽出し、『公共一問一答』の政経分野（第V〜X部）の各解答語が問題文・選択肢に現れる問題数を集計しています。</p>
@@ -149,4 +151,4 @@ select,input{font-size:16px!important}
 </div></div><div class="toast" id="toast"></div>
 
 
-<dialog class="confusion-dialog" id="confusionDialog"><div class="dialog-head"><div><strong>混同ペア</strong><div class="dialog-sub">実際に選んだ誤答から、混同しやすい概念を集計します。</div></div><button class="ghost" id="closeConfusions" type="button">閉じる</button></div><div class="confusion-content" id="confusionContent"></div></dialog><script defer="" src="./app.js"></script></body></html>
+<dialog class="confusion-dialog" id="confusionDialog"><div class="dialog-head"><div><strong>混同ペア</strong><div class="dialog-sub">実際に選んだ誤答から、混同しやすい概念を集計します。</div></div><button class="ghost" id="closeConfusions" type="button">閉じる</button></div><div class="confusion-content" id="confusionContent"></div></dialog><dialog class="hotspot-dialog" id="hotspotDialog"><div class="dialog-head"><div><strong>意味ベクトル弱点マップ</strong><div class="dialog-sub">誤答を48次元の意味空間へ伝播し、近接概念の弱点領域を可視化します。</div></div><button class="ghost" id="closeHotspots" type="button">閉じる</button></div><div class="hotspot-map" id="hotspotMap"></div><div class="semantic-note">色が濃い領域ほど、実際の誤答・混同と意味的に近い問題が集中しています。復習順位には入試重要度と現在の学習状態も加味し、同一領域だけが連続しすぎないよう分散します。</div><div class="hotspot-content" id="hotspotContent"></div></dialog><script defer="" src="./app.js"></script></body></html>

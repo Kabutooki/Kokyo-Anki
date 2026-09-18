@@ -1,17 +1,22 @@
-/* 公共一問一答 v21 - local-first learning engine */
+/* 公共一問一答 v22 - semantic hotspot learning engine */
 'use strict';
-const APP_VERSION='21';
-const DATA_VERSION_EXPECTED='2026.09.18.1';
+const APP_VERSION='22';
+const DATA_VERSION_EXPECTED='2026.09.18.2';
 const SCHEMA_VERSION=3;
 const LEGACY_STORAGE_KEY='kokyo_flashcards_progress_v2';
 const SESSION_FALLBACK_KEY='kokyo_flashcards_session_v21';
-const UPDATE_READY_KEY='kokyo_flashcards_update_ready_v21';
+const UPDATE_READY_KEY='kokyo_flashcards_update_ready_v22';
 const CONFUSION_FALLBACK_KEY='kokyo_flashcards_confusions_v21';
 const RETENTION_INTERVAL_DAYS=[1,3,7,21,45];
+const SEMANTIC_REVIEW_LIMIT=60;
+const SEMANTIC_NEIGHBOR_FLOOR=0.55;
+const SEMANTIC_HOT_AREA_RATIO=0.28;
 const DAY=86400000;
 let DATA=null, CARDS=[], META={};
 let progress={};
 let confusionMap=new Map();
+let cardById=new Map(), answerIndex=new Map();
+let semanticHeatCache=null, semanticHeatDirty=true;
 let deck=[];
 let state={mode:'importance',importance:'S',part:'第V部',section:'ALL',query:'',unseenOnly:false,shuffle:false,index:0,revealed:false,selectedChoice:null,selectedAnswer:null,feedback:null,sessionSeed:'',pendingAdvance:null};
 let advanceTimer=null;
@@ -72,7 +77,8 @@ function normalizeEntry(e){
   const updatedAt=Number(e.updatedAt)||now(), masteredAt=Number(e.masteredAt)||null, retained=!!e.retained;
   let dueAt=Number(e.dueAt)||null;
   if(mastered&&!retained&&!dueAt)dueAt=(masteredAt||updatedAt)+DAY;
-  return {cardId:e.cardId,attempts:Math.max(0,Number(e.attempts)||0),correct:Math.max(0,Number(e.correct)||0),wrong:Math.max(0,Number(e.wrong)||0),correctStreak:streak,mastered,lastResult:e.lastResult||null,updatedAt,masteredAt,retentionStage:clampInt(e.retentionStage,0,5),dueAt,retained,lastWrongAnswer:e.lastWrongAnswer||null,distractorCounts:(e.distractorCounts&&typeof e.distractorCounts==='object')?e.distractorCounts:{}};
+  const lastWrongAt=Number(e.lastWrongAt)||(e.lastResult==='wrong'?updatedAt:null);
+  return {cardId:e.cardId,attempts:Math.max(0,Number(e.attempts)||0),correct:Math.max(0,Number(e.correct)||0),wrong:Math.max(0,Number(e.wrong)||0),correctStreak:streak,mastered,lastResult:e.lastResult||null,updatedAt,masteredAt,retentionStage:clampInt(e.retentionStage,0,5),dueAt,retained,lastWrongAnswer:e.lastWrongAnswer||null,lastWrongAt,distractorCounts:(e.distractorCounts&&typeof e.distractorCounts==='object')?e.distractorCounts:{}};
 }
 function normalizeLegacy(raw){const out={};if(!raw||typeof raw!=='object'||Array.isArray(raw))return out;for(const [id,e] of Object.entries(raw)){if(!e||typeof e!=='object')continue;let streak=clampInt(e.correctStreak,0,2);let mastered=!!e.mastered||streak>=2;if(mastered)streak=2;out[id]=normalizeEntry({cardId:id,attempts:e.attempts||0,correct:e.correct||0,wrong:e.wrong||0,correctStreak:streak,mastered,lastResult:e.lastResult,updatedAt:e.updatedAt,masteredAt:mastered?(e.updatedAt||now()):null,retentionStage:0,dueAt:mastered?(e.updatedAt||now())+DAY:null,retained:false,distractorCounts:{}})}return out}
 async function loadStudyData(){
@@ -127,6 +133,82 @@ async function recordConfusion(c,selected){
 function topConfusions(limit=30){return [...confusionMap.values()].sort((a,b)=>(b.count-a.count)||(b.lastAt-a.lastAt)).slice(0,limit)}
 function renderConfusions(){const el=$('#confusionContent'),arr=topConfusions();if(!arr.length){el.innerHTML='<div class="confusion-row">まだ混同データはありません。誤答すると自動で記録されます。</div>';return}el.innerHTML=arr.map(x=>`<div class="confusion-row"><div class="confusion-pair">${esc(displayAnswer(x.answerA))} ↔ ${esc(displayAnswer(x.answerB))}</div><div class="confusion-meta">${x.count}回混同・関連問題 ${x.cardIds.length}問</div></div>`).join('')}
 
+/* ---------- v22: semantic-vector hotspot review ---------- */
+function semanticSimilarityWeight(sim){
+  const x=Math.max(0,(Number(sim)||0)-SEMANTIC_NEIGHBOR_FLOOR)/(1-SEMANTIC_NEIGHBOR_FLOOR);
+  return Math.min(1,x*x);
+}
+function semanticMetadataBoost(a,b){
+  if(!a||!b)return 1;
+  let m=1;
+  if(cardSection(a)===cardSection(b))m+=.24;else if(cardPart(a)===cardPart(b))m+=.07;
+  if(a.answer?.entityClass&&a.answer.entityClass===b.answer?.entityClass)m+=.10;
+  return m;
+}
+function directErrorSignal(c,t=now()){
+  const p=progress[c.id];if(!p||!(p.wrong>0))return 0;
+  const errorRate=(p.wrong||0)/Math.max(1,p.attempts||0);
+  const repeat=Math.log1p(p.wrong||0);
+  const lw=Number(p.lastWrongAt)||0;
+  const ageDays=lw?Math.max(0,(t-lw)/DAY):75;
+  const recency=.25+.75*Math.exp(-ageDays/35);
+  const stillWrong=p.lastResult==='wrong'?1.20:1;
+  return (0.58*repeat+0.88*errorRate)*recency*stillWrong;
+}
+function importanceHeatMultiplier(c){return ({S:1.22,A:1.13,B:1.04,C:.96,R:.92})[impOf(c)]||1}
+function learningHeatMultiplier(c){const st=statusOf(c);return st==='due'?1.24:st==='review'?1.16:st==='streak1'?1.10:st==='new'?1.03:1}
+function computeSemanticHeat(force=false){
+  if(!force&&!semanticHeatDirty&&semanticHeatCache)return semanticHeatCache;
+  const raw=Object.create(null),score=Object.create(null),direct=Object.create(null);const t=now();
+  const add=(id,v)=>{if(!id||!(v>0)||!Number.isFinite(v))return;raw[id]=(raw[id]||0)+v};
+  for(const c of CARDS){
+    const base=directErrorSignal(c,t);if(!(base>0))continue;direct[c.id]=base;add(c.id,base*1.45);
+    for(const pair of (c.semantic?.neighbors||[])){
+      const nid=pair[0],sim=Number(pair[1])||0;if(sim<SEMANTIC_NEIGHBOR_FLOOR)continue;
+      const n=cardById.get(nid);if(!n)continue;add(nid,base*semanticSimilarityWeight(sim)*semanticMetadataBoost(c,n));
+    }
+    const dc=progress[c.id]?.distractorCounts||{};
+    for(const [wrongText,count0] of Object.entries(dc)){
+      const count=Number(count0)||0;if(count<=0)continue;
+      const targets=answerIndex.get(norm(wrongText))||[];const confusionWeight=Math.log1p(count)*1.30;
+      for(const target of targets){if(target.id!==c.id)add(target.id,confusionWeight*semanticMetadataBoost(c,target))}
+    }
+  }
+  let maxScore=0;
+  for(const c of CARDS){const v=(raw[c.id]||0)*importanceHeatMultiplier(c)*learningHeatMultiplier(c);score[c.id]=v;if(v>maxScore)maxScore=v}
+  const metaByCluster=new Map((DATA?.semanticModel?.clusters||[]).map(x=>[Number(x.id),x]));
+  const clusterAgg=new Map();
+  for(const c of CARDS){const k=Number(c.semantic?.cluster);if(!Number.isInteger(k))continue;let x=clusterAgg.get(k);if(!x){const m=metaByCluster.get(k)||{};x={id:k,label:m.label||cardSectionTitle(c),part:m.part||cardPartTitle(c),center:m.center||[0,0],size:m.size||0,heat:0,directErrors:0,cards:[]};clusterAgg.set(k,x)}const sc=score[c.id]||0;if(sc>0)x.cards.push({id:c.id,score:sc});if(direct[c.id]>0)x.directErrors++;}
+  let maxCluster=0;for(const x of clusterAgg.values()){x.cards.sort((a,b)=>b.score-a.score);const top=x.cards.slice(0,Math.min(12,x.cards.length));x.heat=top.length?top.reduce((z,a)=>z+a.score,0)/Math.sqrt(top.length):0;if(x.heat>maxCluster)maxCluster=x.heat}
+  const clusters=[...clusterAgg.values()].map(x=>({...x,relative:maxCluster?x.heat/maxCluster:0})).sort((a,b)=>b.heat-a.heat);
+  const hotAreaCount=clusters.filter(x=>x.heat>0&&x.relative>=SEMANTIC_HOT_AREA_RATIO).length;
+  semanticHeatCache={raw,score,direct,maxScore,clusters,hotAreaCount,computedAt:t};semanticHeatDirty=false;return semanticHeatCache;
+}
+function semanticReviewDeck(limit=SEMANTIC_REVIEW_LIMIT){
+  const h=computeSemanticHeat();let candidates=CARDS.filter(c=>(h.score[c.id]||0)>0.01).sort((a,b)=>(h.score[b.id]-h.score[a.id])||a.id.localeCompare(b.id));
+  if(!candidates.length)return [];
+  candidates=candidates.slice(0,Math.max(limit*4,160));
+  const groups=new Map();for(const c of candidates){const k=Number(c.semantic?.cluster);if(!groups.has(k))groups.set(k,[]);groups.get(k).push(c)}
+  const weights=new Map(h.clusters.map(x=>[Number(x.id),Math.max(.04,Math.pow(Math.max(0,x.relative||0),.72))]));
+  const usedCount=new Map(),out=[];let lastCluster=null,sameRun=0;
+  while(out.length<limit){
+    const options=[];
+    for(const [k,arr] of groups){const used=usedCount.get(k)||0;if(used>=arr.length)continue;const next=arr[used],base=weights.get(k)||.04,cardScore=h.maxScore?Math.min(1,(h.score[next.id]||0)/h.maxScore):0;const fairness=base/(1+used*.48);const priority=fairness*(.72+.28*cardScore);options.push({k,next,priority})}
+    if(!options.length)break;options.sort((a,b)=>b.priority-a.priority||((h.score[b.next.id]||0)-(h.score[a.next.id]||0))||a.next.id.localeCompare(b.next.id));
+    let chosen=options[0];if(chosen.k===lastCluster&&sameRun>=2){const alt=options.find(x=>x.k!==lastCluster);if(alt)chosen=alt}
+    out.push(chosen.next);usedCount.set(chosen.k,(usedCount.get(chosen.k)||0)+1);if(chosen.k===lastCluster)sameRun++;else{lastCluster=chosen.k;sameRun=1}
+  }
+  return out;
+}
+function heatLevel(relative){return relative>=.72?'強':relative>=.42?'中':relative>=.20?'弱':'微'}
+function renderHotspotMap(){
+  const h=computeSemanticHeat(true),content=$('#hotspotContent'),map=$('#hotspotMap');if(!content||!map)return;
+  if(!h.clusters.some(x=>x.heat>0)){map.innerHTML='<div class="hotspot-empty">まだ弱点マップを作れる誤答履歴がありません。通常学習で誤答すると自動的に形成されます。</div>';content.innerHTML='';return}
+  const W=620,H=340,pad=28;const pts=h.clusters.filter(x=>x.heat>0||x.directErrors>0).map(x=>{const cx=Number(x.center?.[0])||0,cy=Number(x.center?.[1])||0;const px=pad+(cx+1)/2*(W-2*pad),py=pad+(cy+1)/2*(H-2*pad);const r=7+Math.min(19,Math.sqrt(Math.max(1,x.size||1))*1.15);const rel=Math.max(0,Math.min(1,x.relative||0));const hue=220-rel*214,light=66-rel*20;return `<g><circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${r.toFixed(1)}" fill="hsl(${hue.toFixed(0)} 76% ${light.toFixed(0)}%)" fill-opacity="${(.25+.70*rel).toFixed(2)}" stroke="hsl(${hue.toFixed(0)} 55% 40%)" stroke-width="${rel>=SEMANTIC_HOT_AREA_RATIO?2:1}"><title>${esc(x.label)}：弱点 ${heatLevel(rel)}</title></circle></g>`}).join('');
+  map.innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="意味ベクトル空間の弱点マップ">${pts}</svg><div class="hotspot-legend"><span>低</span><span class="legend-gradient"></span><span>高</span></div>`;
+  const top=h.clusters.filter(x=>x.heat>0).slice(0,10);content.innerHTML=top.map((x,i)=>{const rel=x.relative||0;const pct=Math.round(rel*100);return `<div class="hotspot-row"><div class="hotspot-rank">${i+1}</div><div class="hotspot-main"><div class="hotspot-label">${esc(x.label)}</div><div class="hotspot-meta">${esc(x.part||'')}・直接誤答 ${x.directErrors}問・弱点 ${heatLevel(rel)}</div><div class="hotspot-bar"><span style="width:${pct}%"></span></div></div><div class="hotspot-score">${pct}</div></div>`}).join('');
+}
+
 /* ---------- feature 6: diagnostic distractors + session-position randomization ---------- */
 function choicesFor(c){
   const ds=(c.distractors||[]).slice(0,3);if(ds.length!==3){console.error('distractors missing',c.id);return [{answer:answerOf(c),correct:true,key:0}]}
@@ -160,12 +242,13 @@ async function recordResult(c,isCorrect,selectedAnswer,responseMs){
   const t=now(),prev=normalizeEntry(progress[c.id]);prev.cardId=c.id;const wasMastered=!!prev.mastered||prev.correctStreak>=2;const wasDue=isDueEntry(prev,t);
   let correctStreak=isCorrect?Math.min(2,(prev.correctStreak||0)+1):0;let mastered=correctStreak>=2;
   const p={...prev,cardId:c.id,attempts:(prev.attempts||0)+1,correct:(prev.correct||0)+(isCorrect?1:0),wrong:(prev.wrong||0)+(isCorrect?0:1),correctStreak,mastered,lastResult:isCorrect?'correct':'wrong',updatedAt:t,distractorCounts:{...(prev.distractorCounts||{})}};
-  if(!isCorrect){p.mastered=false;p.retained=false;p.retentionStage=0;p.dueAt=null;p.masteredAt=null;p.lastWrongAnswer=selectedAnswer;p.distractorCounts[selectedAnswer]=(p.distractorCounts[selectedAnswer]||0)+1}
+  if(!isCorrect){p.mastered=false;p.retained=false;p.retentionStage=0;p.dueAt=null;p.masteredAt=null;p.lastWrongAnswer=selectedAnswer;p.lastWrongAt=t;p.distractorCounts[selectedAnswer]=(p.distractorCounts[selectedAnswer]||0)+1}
   else if(mastered&&!wasMastered){scheduleAfterMastery(p,t)}
   else if(mastered&&wasDue){advanceRetention(p,t)}
   await persistCard(p);
   await addAttempt({cardId:c.id,timestamp:t,correct:isCorrect,selectedAnswer,responseMs:Math.max(0,Number(responseMs)||0),sessionId:state.sessionSeed,wasDue,importance:impOf(c),sectionCode:cardSection(c)});
   if(!isCorrect)await recordConfusion(c,selectedAnswer);
+  semanticHeatDirty=true;
   updateStats();
   return {isCorrect,correctStreak:p.correctStreak,mastered:p.mastered,becameMastered:p.mastered&&!wasMastered,lostMastery:!p.mastered&&wasMastered,retentionAdvanced:isCorrect&&wasDue,retained:!!p.retained,nextDueAt:p.dueAt};
 }
@@ -201,35 +284,36 @@ function bind(){
   $('#shuffle').addEventListener('change',e=>{restoredDeckIds=null;state.shuffle=e.target.checked;state.index=0;rotateSessionSeed();resetAnswer({save:false}).then(()=>{rebuild(true);saveSession()})});
   $('#choices').addEventListener('click',e=>{const b=e.target.closest('.choice');if(b)choose(Number(b.dataset.index))});
   $('#restart').addEventListener('click',async()=>{restoredDeckIds=null;state.index=0;rotateSessionSeed();await resetAnswer({save:false});rebuild(true);await saveSession();toast('先頭に戻りました')});
-  $('#resetProgress').addEventListener('click',async()=>{if(confirm('学習履歴をすべて初期化しますか？')){progress={};confusionMap.clear();if(dbAvailable){for(const s of ['cardState','attemptEvents','confusionStats'])await StudyDB.clear(s)}try{localStorage.removeItem(LEGACY_STORAGE_KEY);localStorage.removeItem(CONFUSION_FALLBACK_KEY)}catch(e){}updateStats();rebuild(true);toast('学習履歴を初期化しました')}});
+  $('#resetProgress').addEventListener('click',async()=>{if(confirm('学習履歴をすべて初期化しますか？')){progress={};confusionMap.clear();semanticHeatDirty=true;if(dbAvailable){for(const s of ['cardState','attemptEvents','confusionStats'])await StudyDB.clear(s)}try{localStorage.removeItem(LEGACY_STORAGE_KEY);localStorage.removeItem(CONFUSION_FALLBACK_KEY)}catch(e){}updateStats();rebuild(true);toast('学習履歴を初期化しました')}});
   $('#exportProgress').addEventListener('click',exportProgressData);$('#importProgressBtn').addEventListener('click',()=>$('#importProgress').click());$('#importProgress').addEventListener('change',importProgressData);$('#exportDiagnostics').addEventListener('click',exportDiagnostics);
   $('#showConfusions').addEventListener('click',()=>{renderConfusions();const d=$('#confusionDialog');if(typeof d.showModal==='function')d.showModal();else d.setAttribute('open','')});$('#closeConfusions').addEventListener('click',()=>{const d=$('#confusionDialog');if(typeof d.close==='function')d.close();else d.removeAttribute('open')});
+  $('#showHotspots').addEventListener('click',()=>{renderHotspotMap();const d=$('#hotspotDialog');if(typeof d.showModal==='function')d.showModal();else d.setAttribute('open','')});$('#closeHotspots').addEventListener('click',()=>{const d=$('#hotspotDialog');if(typeof d.close==='function')d.close();else d.removeAttribute('open')});
   $('#mobileFilter').addEventListener('click',()=>$('#sidebar').classList.toggle('open'));
   document.addEventListener('keydown',e=>{if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement?.tagName))return;if(!state.revealed&&['1','2','3','4'].includes(e.key)){e.preventDefault();choose(Number(e.key)-1)}});
   for(const ev of ['visibilitychange','pageshow','focus'])window.addEventListener(ev,()=>{if(document.visibilityState!=='hidden')reconcilePendingAdvance()});
 }
 function rebuild(resetReveal=true){
-  let d=CARDS.slice();if(state.mode==='importance')d=d.filter(c=>impOf(c)===state.importance);else if(state.mode==='field')d=d.filter(c=>cardPart(c)===state.part&&(state.section==='ALL'||cardSection(c)===state.section));else if(state.mode==='review')d=d.filter(c=>{const st=statusOf(c);return st!=='new'&&st!=='mastered'&&st!=='due'});else if(state.mode==='due')d=dueCards();else if(state.mode==='wrong')d=d.filter(c=>(progress[c.id]?.wrong||0)>0).sort((a,b)=>((progress[b.id]?.wrong||0)-(progress[a.id]?.wrong||0))||((progress[b.id]?.updatedAt||0)-(progress[a.id]?.updatedAt||0)));
-  if(state.query.trim()){const q=norm(state.query);d=d.filter(c=>norm(promptOf(c)).includes(q)||norm(answerOf(c)).includes(q)||norm(cardSectionTitle(c)).includes(q))}if(state.unseenOnly)d=d.filter(c=>statusOf(c)==='new');if(state.shuffle)d=seededShuffle(d);deck=d;if(state.index>=deck.length)state.index=Math.max(0,deck.length-1);if(resetReveal&&!state.pendingAdvance){state.revealed=false;state.selectedChoice=null;state.selectedAnswer=null;state.feedback=null}render()
+  let d=CARDS.slice();if(state.mode==='importance')d=d.filter(c=>impOf(c)===state.importance);else if(state.mode==='field')d=d.filter(c=>cardPart(c)===state.part&&(state.section==='ALL'||cardSection(c)===state.section));else if(state.mode==='review')d=d.filter(c=>{const st=statusOf(c);return st!=='new'&&st!=='mastered'&&st!=='due'});else if(state.mode==='due')d=dueCards();else if(state.mode==='wrong')d=d.filter(c=>(progress[c.id]?.wrong||0)>0).sort((a,b)=>((progress[b.id]?.wrong||0)-(progress[a.id]?.wrong||0))||((progress[b.id]?.updatedAt||0)-(progress[a.id]?.updatedAt||0)));else if(state.mode==='semantic')d=semanticReviewDeck();
+  if(state.query.trim()){const q=norm(state.query);d=d.filter(c=>norm(promptOf(c)).includes(q)||norm(answerOf(c)).includes(q)||norm(cardSectionTitle(c)).includes(q))}if(state.unseenOnly)d=d.filter(c=>statusOf(c)==='new');if(state.shuffle&&state.mode!=='semantic')d=seededShuffle(d);deck=d;if(state.index>=deck.length)state.index=Math.max(0,deck.length-1);if(resetReveal&&!state.pendingAdvance){state.revealed=false;state.selectedChoice=null;state.selectedAnswer=null;state.feedback=null}render()
 }
-function titleForDeck(){if(state.mode==='importance')return impLabel[state.importance];if(state.mode==='field'){const c=CARDS.find(x=>cardPart(x)===state.part&&(state.section==='ALL'||cardSection(x)===state.section));return state.section==='ALL'?(c?`${cardPart(c)} ${cardPartTitle(c)}`:state.part):(c?`${cardSection(c)} ${cardSectionTitle(c)}`:state.section)}if(state.mode==='review')return '未習熟復習';if(state.mode==='due')return '今日の定着確認';if(state.mode==='wrong')return '誤答ノート';return '全範囲'}
+function titleForDeck(){if(state.mode==='importance')return impLabel[state.importance];if(state.mode==='field'){const c=CARDS.find(x=>cardPart(x)===state.part&&(state.section==='ALL'||cardSection(x)===state.section));return state.section==='ALL'?(c?`${cardPart(c)} ${cardPartTitle(c)}`:state.part):(c?`${cardSection(c)} ${cardSectionTitle(c)}`:state.section)}if(state.mode==='review')return '未習熟復習';if(state.mode==='due')return '今日の定着確認';if(state.mode==='wrong')return '誤答ノート';if(state.mode==='semantic')return '意味弱点復習';return '全範囲'}
 function render(){
-  $('#sessionTitle').textContent=titleForDeck();$('#sessionSub').textContent=`${deck.length.toLocaleString()}枚${state.unseenOnly?'・未学習のみ':''}${state.query?'・検索中':''}${state.shuffle?'・シャッフル':''}`;const has=deck.length>0;$('#empty').classList.toggle('show',!has);$('#card').style.display=has?'flex':'none';$('#counter').textContent=has?`${state.index+1} / ${deck.length}`:'0 / 0';$('#progressFill').style.width=has?`${((state.index+1)/deck.length)*100}%`:'0%';if(!has)return;
+  $('#sessionTitle').textContent=titleForDeck();$('#sessionSub').textContent=`${deck.length.toLocaleString()}枚${state.mode==='semantic'?'・誤答ホットエリア優先・領域間は分散':''}${state.unseenOnly?'・未学習のみ':''}${state.query?'・検索中':''}${state.shuffle&&state.mode!=='semantic'?'・シャッフル':''}`;const has=deck.length>0;const empty=$('#empty');empty.classList.toggle('show',!has);if(!has&&state.mode==='semantic')empty.innerHTML='<strong>まだ意味弱点がありません</strong>通常学習で誤答すると、その問題と意味的に近い領域が自動的に弱点マップへ反映されます。';else if(!has)empty.innerHTML='<strong>該当するカードがありません</strong>絞り込み条件を変更してください。';$('#card').style.display=has?'flex':'none';$('#counter').textContent=has?`${state.index+1} / ${deck.length}`:'0 / 0';$('#progressFill').style.width=has?`${((state.index+1)/deck.length)*100}%`:'0%';if(!has)return;
   const c=deck[state.index],st=statusOf(c),opts=choicesFor(c);$('#sectionBadge').textContent=`${cardSection(c)} ${cardSectionTitle(c)}`;const ib=$('#impBadge');ib.textContent=impLabel[impOf(c)];ib.className='badge '+impOf(c);$('#statusBadge').textContent=statusLabel[st]||st;$('#sourceInfo').textContent=`一問一答 p.${c.source.page} / #${c.source.number}`;$('#question').textContent=promptOf(c);$('#answer').textContent=displayAnswer(answerOf(c));
   $('#choices').innerHTML=opts.map((o,i)=>{let cls='choice';if(state.revealed){if(o.correct)cls+=' correct';else if(i===state.selectedChoice)cls+=' wrong';else cls+=' dim'}return `<button class="${cls}" data-index="${i}" ${state.revealed?'disabled':''}><span class="choice-key">${i+1}</span><span class="choice-text">${esc(displayAnswer(o.answer))}</span></button>`}).join('');$('#answerWrap').classList.toggle('show',state.revealed);
   const note=$('#feedbackNote');if(state.revealed&&state.feedback&&!state.feedback.isCorrect){note.textContent=feedbackNote(c,state.selectedAnswer);note.classList.add('show')}else{note.textContent='';note.classList.remove('show')}
   const fb=$('#autoFeedback');if(state.revealed&&state.feedback){const f=state.feedback;let msg='';if(f.isCorrect&&f.retained)msg='正解。定着確認を完了しました。';else if(f.isCorrect&&f.retentionAdvanced)msg='正解。定着確認クリア。次回の復習間隔を延ばしました。';else if(f.isCorrect&&f.becameMastered)msg='正解。2回連続正答で「習熟」になりました。';else if(f.isCorrect&&f.mastered)msg='正解。「習熟」です。';else if(f.isCorrect)msg='正解。連続正答 1 / 2。';else if(f.lostMastery)msg='不正解。習熟状態を解除し、再学習に戻します。';else msg='不正解。連続正答数は0に戻りました。';fb.textContent=msg+' 自動で次へ進みます。';fb.className='auto-feedback show '+(f.isCorrect?'correct':'wrong')}else{fb.textContent='';fb.className='auto-feedback'}
   if(impOf(c)==='R'){$('#refSummary').textContent='重要度：参考外（政経過去問では判定しない）';$('#refContent').innerHTML='第I〜IV部は倫理分野のため、今回のセンター政経資料による頻度分類の対象外です。'}else{$('#refSummary').textContent=`センター政経での語の出現：${c.importance.refHits}問`;const codes=(c.importance.refQuestionCodes||[]).join('、')||'該当なし';const terms=(c.importance.matchTerms||[]).join(' / ');$('#refContent').innerHTML=`<div>照合語: <code>${esc(terms||answerOf(c))}</code></div><div>該当問題コード: <code>${esc(codes)}</code></div>`}$('#refDetails').open=false;questionShownAt=now();
 }
-function updateStats(){const cnt={new:0,review:0,streak1:0,mastered:0,due:0};for(const c of CARDS){const s=statusOf(c);cnt[s]=(cnt[s]||0)+1}$('#statNew').textContent=(cnt.new||0).toLocaleString();$('#statAgain').textContent=(cnt.review||0).toLocaleString();$('#statHard').textContent=(cnt.streak1||0).toLocaleString();$('#statGood').textContent=((cnt.mastered||0)+(cnt.due||0)).toLocaleString();$('#dueCards').textContent=(cnt.due||0).toLocaleString();const dueTab=$('.tab[data-mode="due"]');if(dueTab)dueTab.textContent=`今日の復習 ${cnt.due||0}`}
+function updateStats(){const cnt={new:0,review:0,streak1:0,mastered:0,due:0};for(const c of CARDS){const s=statusOf(c);cnt[s]=(cnt[s]||0)+1}$('#statNew').textContent=(cnt.new||0).toLocaleString();$('#statAgain').textContent=(cnt.review||0).toLocaleString();$('#statHard').textContent=(cnt.streak1||0).toLocaleString();$('#statGood').textContent=((cnt.mastered||0)+(cnt.due||0)).toLocaleString();$('#dueCards').textContent=(cnt.due||0).toLocaleString();const dueTab=$('.tab[data-mode="due"]');if(dueTab)dueTab.textContent=`今日の復習 ${cnt.due||0}`;const h=computeSemanticHeat();const hot=$('#hotAreas');if(hot)hot.textContent=(h.hotAreaCount||0).toLocaleString();const semTab=$('.tab[data-mode="semantic"]');if(semTab)semTab.textContent=h.hotAreaCount?`意味弱点 ${h.hotAreaCount}`:'意味弱点'}
 
-async function exportProgressData(){let attempts=[];if(dbAvailable){try{attempts=await StudyDB.getAll('attemptEvents')}catch(e){}}const payload={app:'公共一問一答',formatVersion:3,appVersion:APP_VERSION,dataVersion:DATA.dataVersion,schemaVersion:SCHEMA_VERSION,masteryRule:'2_consecutive_correct_plus_retention',exportedAt:new Date().toISOString(),progress,confusions:topConfusions(9999),attempts};shareJson(payload,'公共一問一答_学習履歴_v21.json','公共一問一答 学習履歴')}
-async function exportDiagnostics(){const attempts=dbAvailable?await StudyDB.getAll('attemptEvents'):[];const payload={appVersion:APP_VERSION,dataVersion:DATA.dataVersion,generatedAt:new Date().toISOString(),summary:{cards:CARDS.length,due:dueCards().length,confusionPairs:confusionMap.size,attempts:attempts.length},confusions:topConfusions(9999),distractorSelections:Object.fromEntries(Object.entries(progress).filter(([,p])=>Object.keys(p.distractorCounts||{}).length).map(([id,p])=>[id,p.distractorCounts]))};shareJson(payload,'公共一問一答_学習分析_v21.json','公共一問一答 学習分析')}
+async function exportProgressData(){let attempts=[];if(dbAvailable){try{attempts=await StudyDB.getAll('attemptEvents')}catch(e){}}const payload={app:'公共一問一答',formatVersion:3,appVersion:APP_VERSION,dataVersion:DATA.dataVersion,schemaVersion:SCHEMA_VERSION,masteryRule:'2_consecutive_correct_plus_retention',exportedAt:new Date().toISOString(),progress,confusions:topConfusions(9999),attempts};shareJson(payload,'公共一問一答_学習履歴_v22.json','公共一問一答 学習履歴')}
+async function exportDiagnostics(){const attempts=dbAvailable?await StudyDB.getAll('attemptEvents'):[];const heat=computeSemanticHeat(true);const payload={appVersion:APP_VERSION,dataVersion:DATA.dataVersion,semanticModel:DATA.semanticModel?.id||null,generatedAt:new Date().toISOString(),summary:{cards:CARDS.length,due:dueCards().length,confusionPairs:confusionMap.size,attempts:attempts.length,hotAreas:heat.hotAreaCount},hotspots:heat.clusters.filter(x=>x.heat>0).slice(0,20).map(x=>({cluster:x.id,label:x.label,relative:x.relative,directErrors:x.directErrors,topCards:x.cards.slice(0,8)})),confusions:topConfusions(9999),distractorSelections:Object.fromEntries(Object.entries(progress).filter(([,p])=>Object.keys(p.distractorCounts||{}).length).map(([id,p])=>[id,p.distractorCounts]))};shareJson(payload,'公共一問一答_学習分析_v22.json','公共一問一答 学習分析')}
 function shareJson(payload,name,title){const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});const file=new File([blob],name,{type:'application/json'});if(navigator.canShare&&navigator.canShare({files:[file]})){navigator.share({title,files:[file]}).catch(()=>{})}else{const a=document.createElement('a');const url=URL.createObjectURL(blob);a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),1000)}}
-async function importProgressData(e){const f=e.target.files&&e.target.files[0];if(!f)return;try{const obj=JSON.parse(await f.text());const raw=obj.progress||obj;if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('invalid');progress={};for(const [id,v] of Object.entries(raw)){const p=normalizeEntry({...v,cardId:id});progress[id]=p;if(dbAvailable)await StudyDB.put('cardState',p)}if(Array.isArray(obj.confusions)){confusionMap.clear();for(const x of obj.confusions){if(x.pairKey){confusionMap.set(x.pairKey,x);if(dbAvailable)await StudyDB.put('confusionStats',x)}}try{localStorage.setItem(CONFUSION_FALLBACK_KEY,JSON.stringify([...confusionMap.values()]))}catch(e){}}if(dbAvailable&&Array.isArray(obj.attempts)){await StudyDB.clear('attemptEvents');for(const ev of obj.attempts){const copy={...ev};delete copy.id;await StudyDB.add('attemptEvents',copy)}}updateStats();rebuild(true);await saveSession();toast('学習履歴を読み込みました')}catch(err){console.error(err);alert('学習履歴ファイルを読み込めませんでした。')}e.target.value=''}
+async function importProgressData(e){const f=e.target.files&&e.target.files[0];if(!f)return;try{const obj=JSON.parse(await f.text());const raw=obj.progress||obj;if(!raw||typeof raw!=='object'||Array.isArray(raw))throw new Error('invalid');progress={};for(const [id,v] of Object.entries(raw)){const p=normalizeEntry({...v,cardId:id});progress[id]=p;if(dbAvailable)await StudyDB.put('cardState',p)}if(Array.isArray(obj.confusions)){confusionMap.clear();for(const x of obj.confusions){if(x.pairKey){confusionMap.set(x.pairKey,x);if(dbAvailable)await StudyDB.put('confusionStats',x)}}try{localStorage.setItem(CONFUSION_FALLBACK_KEY,JSON.stringify([...confusionMap.values()]))}catch(e){}}if(dbAvailable&&Array.isArray(obj.attempts)){await StudyDB.clear('attemptEvents');for(const ev of obj.attempts){const copy={...ev};delete copy.id;await StudyDB.add('attemptEvents',copy)}}semanticHeatDirty=true;updateStats();rebuild(true);await saveSession();toast('学習履歴を読み込みました')}catch(err){console.error(err);alert('学習履歴ファイルを読み込めませんでした。')}e.target.value=''}
 let toastTimer;function toast(s){const t=$('#toast');t.textContent=s;t.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>t.classList.remove('show'),2200)}
 
-async function loadDataset(){const r=await fetch('./cards.json',{cache:'no-store'});if(!r.ok)throw new Error('cards.json '+r.status);DATA=await r.json();if(DATA.schemaVersion!==1)throw new Error('unsupported card schema');if(DATA.dataVersion!==DATA_VERSION_EXPECTED)console.warn('data version mismatch',DATA.dataVersion);CARDS=DATA.cards;META=DATA.meta}
+async function loadDataset(){const r=await fetch('./cards.json',{cache:'no-store'});if(!r.ok)throw new Error('cards.json '+r.status);DATA=await r.json();if(DATA.schemaVersion!==2)throw new Error('unsupported card schema');if(DATA.dataVersion!==DATA_VERSION_EXPECTED)console.warn('data version mismatch',DATA.dataVersion);CARDS=DATA.cards;META=DATA.meta;cardById=new Map(CARDS.map(c=>[c.id,c]));answerIndex=new Map();for(const c of CARDS){const k=norm(answerOf(c));if(!answerIndex.has(k))answerIndex.set(k,[]);answerIndex.get(k).push(c)}semanticHeatDirty=true}
 async function init(){
   await loadDataset();await loadStudyData();state.sessionSeed=newSeed();const restored=await loadSession();
   $('#allCards').textContent=META.totalCards.toLocaleString();$('#peCards').textContent=META.politicsEconomicsCards.toLocaleString();$('#refQs').textContent=META.referenceQuestions.toLocaleString();for(const k of ['S','A','B','C'])$('#cnt'+k).textContent=(META.importanceCounts[k]||0)+'枚';buildPartSelect();bind();
@@ -237,4 +321,4 @@ async function init(){
   if(restored&&restoredDeckIds&&restoredDeckIds.length){const map=new Map(CARDS.map(c=>[c.id,c]));deck=restoredDeckIds.map(id=>map.get(id)).filter(Boolean);if(state.restoreCardId){const ix=deck.findIndex(c=>c.id===state.restoreCardId);if(ix>=0)state.index=ix}delete state.restoreCardId;render()}else rebuild(false);updateStats();$('#loadingState').classList.add('hide');await setupServiceWorker();await saveSession();if(state.pendingAdvance)reconcilePendingAdvance();
 }
 if(typeof window!=='undefined'&&typeof document!=='undefined'){init().catch(e=>{console.error(e);const l=$('#loadingState');if(l)l.textContent='読み込みに失敗しました。ページを再読み込みしてください。';});}
-if(typeof module!=='undefined'&&module.exports){module.exports={hash,norm,displayAnswer,normalizeEntry,isDueEntry,scheduleAfterMastery,advanceRetention,pairKey,feedbackNote,choicesFor,RETENTION_INTERVAL_DAYS,DAY,state};}
+if(typeof module!=='undefined'&&module.exports){module.exports={hash,norm,displayAnswer,normalizeEntry,isDueEntry,scheduleAfterMastery,advanceRetention,pairKey,feedbackNote,choicesFor,semanticSimilarityWeight,directErrorSignal,computeSemanticHeat,semanticReviewDeck,RETENTION_INTERVAL_DAYS,DAY,state};}
