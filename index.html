@@ -43,7 +43,7 @@ button{cursor:pointer}
 .card-body{padding:34px 34px 24px;display:flex;flex-direction:column;flex:1}.face-label{font-size:11px;color:var(--muted);font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px}.question{font-size:clamp(20px,2.2vw,29px);font-weight:700;line-height:1.72;letter-spacing:.01em;white-space:pre-wrap;overflow-wrap:anywhere}.question:has(br){line-height:1.55}.choices{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:28px}.choice{width:100%;border:1px solid #d5d9df;border-radius:14px;background:#fff;padding:14px 15px;text-align:left;color:#20242a;display:flex;align-items:flex-start;gap:12px;min-height:66px;line-height:1.55;transition:border-color .12s,background .12s,box-shadow .12s,opacity .12s}@media (hover:hover) and (pointer:fine){.choice:hover:not(:disabled){border-color:#8da2fb;box-shadow:0 0 0 3px #eef2ff}}
 .choice:focus{outline:none}
 .choice:focus-visible{outline:3px solid #3448c5;outline-offset:2px}
-@media (hover:none) and (pointer:coarse){.choice:focus,.choice:focus-visible{outline:none}.choice:hover:not(:disabled):not(.correct):not(.wrong){border-color:#d5d9df;box-shadow:none}}.choice-key{width:27px;height:27px;border:1px solid #d0d5dd;border-radius:8px;display:grid;place-items:center;flex:none;font-size:12px;font-weight:800;color:#667085;background:#f9fafb}.choice-text{font-weight:650;word-break:break-word}.choice.correct{border-color:#75e0a7;background:#ecfdf3;color:#05603a;box-shadow:0 0 0 2px #d1fadf}.choice.correct .choice-key{border-color:#75e0a7;background:#d1fadf;color:#05603a}.choice.wrong{border-color:#fda29b;background:#fef3f2;color:#912018;box-shadow:0 0 0 2px #fee4e2}.choice.wrong .choice-key{border-color:#fda29b;background:#fee4e2;color:#912018}.choice.dim{opacity:.58}.choice:disabled{cursor:default}.answer-wrap{margin-top:25px;padding-top:22px;border-top:1px dashed #d0d5dd;display:none}.answer-wrap.show{display:block}.answer{font-size:clamp(20px,2.25vw,28px);font-weight:800;line-height:1.6;color:#101828;white-space:pre-wrap}.refbox{margin-top:18px;font-size:12px;color:var(--muted)}.refbox summary{cursor:pointer}.refbox code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#475467;word-break:break-all}
+@media (hover:none) and (pointer:coarse){.choice:focus,.choice:focus-visible{outline:none}.choice:hover:not(:disabled):not(.correct):not(.wrong){border-color:#d5d9df;box-shadow:none}}.choice-key{width:27px;height:27px;border:1px solid #d0d5dd;border-radius:8px;display:grid;place-items:center;flex:none;font-size:12px;font-weight:800;color:#667085;background:#f9fafb}.choice-text{font-weight:650;word-break:break-word}.choice.correct{border-color:#75e0a7;background:#ecfdf3;color:#05603a;box-shadow:0 0 0 2px #d1fadf}.choice.correct .choice-key{border-color:#75e0a7;background:#d1fadf;color:#05603a}.choice.wrong{border-color:#fda29b;background:#fef3f2;color:#912018;box-shadow:0 0 0 2px #fee4e2}.choice.wrong .choice-key{border-color:#fda29b;background:#fee4e2;color:#912018}.choice.dim{opacity:.58}.choice:disabled{cursor:default}.answer-wrap{margin-top:25px;padding-top:22px;border-top:1px dashed #d0d5dd;display:none}.answer-wrap.show{display:block}.answer{font-size:clamp(20px,2.25vw,28px);font-weight:800;line-height:1.6;color:#101828;white-space:pre-wrap}.refbox{margin-top:18px;font-size:12px;color:var(--muted)}.refbox summary{cursor:pointer}.refbox code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#475467;word-break:break-all}.importance-dims{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:3px 12px;margin:8px 0}.refbox ul{margin:6px 0;padding-left:20px}
 .reveal-area{margin-top:auto;padding-top:28px}.auto-feedback{display:none;border:1px solid var(--line);border-radius:12px;padding:12px 14px;font-size:13px;font-weight:700;line-height:1.55}.auto-feedback.show{display:block}.auto-feedback.correct{color:#05603a;background:#ecfdf3;border-color:#abefc6}.auto-feedback.wrong{color:#912018;background:#fef3f2;border-color:#fecdca}
 .navrow{display:flex;justify-content:space-between;gap:10px;margin-top:13px}.navbtn{border:1px solid var(--line);background:#fff;color:#344054;border-radius:10px;padding:9px 13px;font-size:12px}.navbtn:disabled{opacity:.4;cursor:not-allowed}.kbdhint{text-align:center;color:#98a2b3;font-size:11px;margin:12px 0 0}
 .empty{display:none;background:#fff;border:1px solid var(--line);border-radius:18px;padding:42px;text-align:center;color:var(--muted)}.empty.show{display:block}.empty strong{display:block;color:#344054;font-size:18px;margin-bottom:8px}
@@ -93,7 +93,7 @@ select,input{font-size:16px!important}
 <link href="./icons/apple-touch-icon.png" rel="apple-touch-icon"/>
 <meta content="yes" name="mobile-web-app-capable"/>
 <meta content="公共一問一答" name="application-name"/>
-<meta content="2026-09-18-v28" name="app-build"/></head>
+<meta content="2026-09-19-v29" name="app-build"/></head>
 <body><div class="loading-state" id="loadingState">教材と学習履歴を読み込んでいます…</div>
 <div class="install-hint" id="pwaInstallHint" role="status"><button aria-label="閉じる" onclick="this.parentElement.style.display='none';localStorage.setItem('pwaHintDismissed','1')" type="button">×</button><strong>ホーム画面に追加できます。</strong> Safariで共有ボタンを押し、「ホーム画面に追加」を選択してください。</div>
 <div class="app">
@@ -111,12 +111,13 @@ select,input{font-size:16px!important}
 <button class="tab" data-mode="review">未習熟復習</button>
 <button class="tab" data-mode="due">今日の復習</button><button class="tab" data-mode="wrong">誤答ノート</button><button class="tab" data-mode="semantic">意味弱点</button></div>
 <div id="importanceControls">
-<div class="label"><strong>重要度</strong><span>センター政経の出現頻度</span></div>
+<div class="label"><strong>重要度</strong><span>5軸の総合評価</span></div>
 <div class="imp-grid">
 <button class="imp-btn active" data-imp="S"><b>S 最重要</b><span id="cntS"></span></button>
 <button class="imp-btn" data-imp="A"><b>A 重要</b><span id="cntA"></span></button>
 <button class="imp-btn" data-imp="B"><b>B 標準</b><span id="cntB"></span></button>
 <button class="imp-btn" data-imp="C"><b>C 補充</b><span id="cntC"></span></button>
+<button class="imp-btn" data-imp="R"><b>R 参考</b><span id="cntR"></span></button>
 </div>
 </div>
 <div id="fieldControls" style="display:none">
@@ -137,9 +138,9 @@ select,input{font-size:16px!important}
 <div class="side-actions"><button class="ghost" id="showConfusions">混同ペアを見る</button><button class="ghost" id="showHotspots">弱点マップを見る</button></div><div class="side-actions"><button class="ghost" id="exportDiagnostics">学習分析を書き出す</button><span></span></div><div class="ios-note">問題演習中の操作は4択の選択だけです。回答結果・誤答内容・復習時期は自動保存されます。2回連続正答で「習熟」となり、その後は間隔を空けて「定着確認」に自動出題します。誤答は意味ベクトル空間にも反映され、「意味弱点」では周辺概念を重点的かつ分散して復習します。</div>
 </div>
 <div class="method"><details><summary>重要度の算定方法</summary>
-<p>『センター政経問題』から339問の問題ブロックを抽出し、『公共一問一答』の政経分野（第V〜X部）の各解答語が問題文・選択肢に現れる問題数を集計しています。</p>
-<div class="thresholds"><b>S</b><span>5問以上</span><b>A</b><span>2〜4問</span><b>B</b><span>1問</span><b>C</b><span>0問</span></div>
-<p>第I〜IV部（倫理）は、参照資料が政経問題のみのため「参考外」としています。頻度は「その語が過去問に出現した回数」であり、「その語自体が正解として問われた回数」とは限りません。</p>
+<p>「公共・政治経済」を効率よく学ぶため、①学習指導要領上の中心性、②添付過去問と2025・2026共通テストでの出題実績、③他分野を支える土台性、④選択肢の識別で差がつく度合い、⑤資料・時事問題への応用性を総合しています。</p>
+<div class="thresholds"><b>S</b><span>最優先（全体の約5%）</span><b>A</b><span>重要（約14%）</span><b>B</b><span>標準</span><b>C</b><span>補充</span><b>R</b><span>参考・細部</span></div>
+<p>第I〜IV部は、倫理試験としての頻度ではなく、公共・政経の理解に役立つ範囲だけを上位にしています。各問題の正解後に、5軸の内訳と判定理由を確認できます。</p>
 </details></div>
 </aside>
 <main class="main">
