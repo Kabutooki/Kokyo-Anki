@@ -1,9 +1,10 @@
 {
-  "appVersion": 29,
+  "appVersion": 30,
   "dataVersion": "2026.09.19.1",
   "schemaVersion": 3,
   "cardSchemaVersion": 2,
   "semanticModel": "jp-lsa-char-tfidf-svd-v2",
   "explanationVersion": "2026.09.18.1",
-  "importanceVersion": "v29-multifactor"
+  "importanceVersion": "v29-multifactor",
+  "semanticReviewVersion": "v30-evidence-first"
 }
